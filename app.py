@@ -57,8 +57,13 @@ def init_gspread():
         gc = gspread.service_account_from_dict(creds_dict)
         spreadsheet = gc.open_by_key(SPREADSHEET_ID)
         return spreadsheet.get_worksheet(0)
+        
     except Exception as e:
-        st.error(f"❌ スプレッドシート接続失敗: {e}。Secrets の private_key の記述や、共有設定を確認してください。")
+        # 詳細なエラー情報を画面に表示する
+        st.error(f"❌ スプレッドシート接続失敗: {type(e).__name__} - {e}")
+        # デバッグ用にエラーの詳細なトレースバックをコンソール/ターミナルにも出力する
+        import traceback
+        traceback.print_exc()
         return None
 
 worksheet = init_gspread()
