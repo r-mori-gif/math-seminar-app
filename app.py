@@ -238,7 +238,7 @@ def get_ai_response(messages, turn, has_image):
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=api_messages,
-                max_tokens=2048
+                max_completion_tokens=2048
             )
             res_text = response.choices[0].message.content.strip()
 
