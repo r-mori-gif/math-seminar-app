@@ -33,12 +33,12 @@ if "image_content" not in st.session_state:
     st.session_state.image_content = None
 
 # APIの設定
-openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY")
+openai_api_key = st.secrets.get("OPENAI_API_KEY")
 client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=openrouter_api_key,
+    api_key=openai_api_key, 
 )
-MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+# アキト（A）とハルタ（B）の両方で使うモデルをGPT-6 Solに指定
+MODEL = "gpt-6-sol"
 SPREADSHEET_ID = "1_sRw5amkLY_-O0sj2VlIJklr05DSXJ3Lf8DIYxVSw5c"
 
 # ----------------------------------------------------
