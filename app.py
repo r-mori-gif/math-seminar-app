@@ -35,7 +35,7 @@ if "image_content" not in st.session_state:
 # APIの設定
 openai_api_key = st.secrets.get("OPENAI_API_KEY")
 client = OpenAI(
-    api_key=openai_api_key, 
+    api_key=st.secrets.get("OPENAI_API_KEY"), 
 )
 # アキト（A）とハルタ（B）の両方で使うモデルをGPT-6 Solに指定
 MODEL = "gpt-6-sol"
