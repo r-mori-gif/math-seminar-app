@@ -12,7 +12,7 @@ import gspread
 # 1. ページ初期設定
 # ----------------------------------------------------
 st.set_page_config(page_title="数学ゼミ議論シミュレータ", layout="wide")
-st.title("🎓 数学ゼミ議論シミュレーション")
+st.title("数学ゼミ議論シミュレーション")
 
 # セッション状態の初期化
 if "messages_A" not in st.session_state:
