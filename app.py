@@ -448,7 +448,7 @@ else:
                 
                 if worksheet:
                     try:
-                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        timestamp = datetime.datetime.now(jst).strftime("%Y-%m-%d %H:%M:%S")
                         row_data = [
                             timestamp, MODEL, st.session_state.current_turn, 
                             speaker, response_text, 
