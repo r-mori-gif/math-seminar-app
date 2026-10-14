@@ -3,6 +3,7 @@ import os
 import re
 import base64
 import datetime
+from datetime import timezone, timedelta
 import time
 import matplotlib.pyplot as plt
 from openai import OpenAI
@@ -448,6 +449,7 @@ else:
                 
                 if worksheet:
                     try:
+                        jst = timezone(timedelta(hours=9), 'JST')
                         timestamp = datetime.datetime.now(jst).strftime("%Y-%m-%d %H:%M:%S")
                         row_data = [
                             timestamp, MODEL, st.session_state.current_turn, 
