@@ -323,7 +323,7 @@ if not st.session_state.system_started:
             inst_B_formatted = INSTRUCTION_B.replace("{problem_description}", problem_desc).replace("{MATH_FORMAT_INSTRUCTION}", MATH_FORMAT_INSTRUCTION)
 
             # 初回発言に問題文を明示的に付与（空白対策）
-            start_prompt_text_A = f"こちらの数学の問題を一緒に解き明かしてください。アキト、まずは君から最初の気づきを話して議論をスタートして。\n\n【解くべき問題】\n{problem_desc}"
+            start_prompt_text_A = f"こちらの数学の問題を一緒に解き明かしてください。アキト、まずは君から問題を表示し、最初の気づきを話して議論をスタートして。\n\n【解くべき問題】\n{problem_desc}"
             start_prompt_text_B = f"こちらの数学の問題を一緒に解き明かしてください。\n\n【解くべき問題】\n{problem_desc}"
 
             # 履歴の初期化
