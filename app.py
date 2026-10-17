@@ -221,10 +221,44 @@ def clean_messages_for_api(messages, keep_image=False):
 def format_math_formulas(text):
     if not text:
         return text
+
+    # 基本的な括弧表記の置換
     text = text.replace(r'\[', '$$').replace(r'\]', '$$')
     text = text.replace(r'\(', '$').replace(r'\)', '$')
-    return text
 
+    lines = text.split('\n')
+    fixed_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # パターンA: 行頭が '=' や '\qquad', '\frac' などのLaTeX数式で始まり、末尾にだけ '$$' がある場合
+        # 例: =(t^2...)$$ や \qquad t=...$$
+        if re.match(r'^[=\\].*?\$\$$', stripped) and not stripped.startswith('$$'):
+            line = '$$ ' + stripped
+
+        # パターンB: 行頭に '$$' があり、末尾に '$$' がない場合
+        elif stripped.startswith('$$') and stripped.count('$$') == 1:
+            line = line + ' $$'
+
+        # パターンC: 行の途中に単独で '$$' があり、手前が数式らしい記述の場合
+        # 例: = (式) $$ ここからは文章...
+        elif '$$' in line and line.count('$$') % 2 != 0:
+            # 行頭から最初の '$$' までの間に LaTeX 記号があるかチェック
+            prefix, suffix = line.split('$$', 1)
+            if any(char in prefix for char in ['\\', '^', '_', '{', '}', '=']):
+                line = '$$ ' + prefix.strip() + ' $$ ' + suffix.strip()
+
+        fixed_lines.append(line)
+
+    text = '\n'.join(fixed_lines)
+
+    # 全体を通して $ や $$ の整合性をチェック（奇数個なら末尾を補正して赤文字エラーを防ぐ）
+    if text.count('$$') % 2 != 0:
+        text += '$$'
+
+    return text
+    
 def execute_generated_code(text):
     code_blocks = re.findall(r'```python\s*(.*?)\s*```', text, re.DOTALL)
     for code in code_blocks:
