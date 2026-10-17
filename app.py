@@ -22,52 +22,72 @@ if "messages_B" not in st.session_state:
     st.session_state.messages_B = []
 if "current_turn" not in st.session_state:
     st.session_state.current_turn = 1
+if "next_speaker" not in st.session_state:
+    st.session_state.next_speaker = "A" # A: アキト, B: ハルタ
 if "discussion_log" not in st.session_state:
     st.session_state.discussion_log = []
 if "system_started" not in st.session_state:
     st.session_state.system_started = False
+if "is_finished" not in st.session_state:
+    st.session_state.is_finished = False
 if "problem_text" not in st.session_state:
     st.session_state.problem_text = ""
 if "has_image" not in st.session_state:
     st.session_state.has_image = False
+if "is_geometry" not in st.session_state:
+    st.session_state.is_geometry = False
 if "image_content" not in st.session_state:
     st.session_state.image_content = None
 
 # APIの設定
-openai_api_key = st.secrets.get("OPENAI_API_KEY")
 client = OpenAI(
     api_key=st.secrets.get("OPENAI_API_KEY"), 
 )
-# アキト（A）とハルタ（B）の両方で使うモデルをGPT-6 Solに指定
 MODEL = "gpt-6-sol"
 SPREADSHEET_ID = "1_sRw5amkLY_-O0sj2VlIJklr05DSXJ3Lf8DIYxVSw5c"
 
 # ----------------------------------------------------
-# 2. Googleスプレッドシート接続 (改行コード修正版)
+# 2. Googleスプレッドシート接続
 # ----------------------------------------------------
 @st.cache_resource
 def init_gspread():
     try:
-        # Secrets から辞書形式でコピーを取得
         creds_dict = dict(st.secrets["gcp_service_account"])
-        
-        # 【重要】Streamlit Secrets 特有の改行コードエスケープ問題を解消
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             
         gc = gspread.service_account_from_dict(creds_dict)
         spreadsheet = gc.open_by_key(SPREADSHEET_ID)
         return spreadsheet.get_worksheet(0)
-        
     except Exception as e:
-        # 詳細なエラー情報を画面に表示する
         st.error(f"❌ スプレッドシート接続失敗: {type(e).__name__} - {e}")
-        # デバッグ用にエラーの詳細なトレースバックをコンソール/ターミナルにも出力する
-        import traceback
-        traceback.print_exc()
         return None
 
 worksheet = init_gspread()
+
+def log_to_sheet(speaker, content, usage=None, turn="-"):
+    """スプレッドシート書き込み用ヘルパー関数"""
+    if worksheet:
+        try:
+            jst = timezone(timedelta(hours=9), 'JST')
+            timestamp = datetime.datetime.now(jst).strftime("%Y-%m-%d %H:%M:%S")
+            p_tok = usage.get("prompt_tokens", 0) if usage else 0
+            c_tok = usage.get("completion_tokens", 0) if usage else 0
+            t_tok = usage.get("total_tokens", 0) if usage else 0
+            
+            row = [timestamp, MODEL, turn, speaker, content, p_tok, c_tok, t_tok]
+            worksheet.append_row(row)
+        except Exception as e:
+            st.sidebar.warning(f"スプレッドシート記録エラー: {e}")
+
+def reset_session():
+    """セッションの初期化関数"""
+    keys = ["messages_A", "messages_B", "current_turn", "next_speaker", 
+            "discussion_log", "system_started", "is_finished", 
+            "problem_text", "has_image", "is_geometry", "image_content"]
+    for key in keys:
+        if key in st.session_state:
+            del st.session_state[key]
 
 # ----------------------------------------------------
 # 3. プロンプト定義
@@ -103,7 +123,6 @@ INSTRUCTION_A = """あなたはある数学ゼミに所属する理系大学生�
 あなたは「日本の高校数学（数I・A・II・B・III・C）」の範囲内にある定理・公式・記号のみを使用してください。大学数学の知識は【絶対に使用禁止】です。
 
 特に以下の「大学数学の範囲」と「高校数学の範囲」の境界を厳守してください。NGになっているものは全て大学数学の範囲です。
-
 1. 【対数の表記】
    - NG: 自然対数を `ln(x)` と書くこと。
    - OK: 必ず `log x` または `log_e x` と記述してください。
@@ -131,7 +150,6 @@ INSTRUCTION_A = """あなたはある数学ゼミに所属する理系大学生�
    - コードは必ず ```python と ``` のブロックで囲んでください。
    - システムがコードを抽出し、あなたの代わりにグラフや図を即座に描画して議論の場に表示します。
    - 注意：描写エラーを防ぐため、図のタイトルや軸ラベルには日本語を使わず、必ず英語（または数式表記）で作成してください。
-   - 数値計算による確認では使ってはいけません。あくまで描写コードはユーザー側に分かりやすく伝えるためのツールです。
 4. 完全に解法が明らかになり、ハルタも納得した段階で、高校生にも分かる丁寧な答案を作成してください。答案作成をしたら、『【議論終了】』という1行を追加してください。
 
 {MATH_FORMAT_INSTRUCTION}
@@ -146,17 +164,14 @@ INSTRUCTION_B = """あなたは高校三年生の「ハルタ」です。
 
 【あなたのキャラクター設定】
 - 高校三年生。直感的で、幾何学的なアプローチや、視覚的なイメージ（グラフや図形）化を得意とするが、複雑な数式変形や厳密な論理展開は少し苦手。
-- 少しフランクで、問題解決に向けて熱心な高校生の口調（「なるほど！」「図に描いてみると分かりやすいかも」「ちょっとプロットしてみるね」など）。
-- アキトが少しでも難しい定理を使ったり、計算を省略したり、議論を急ぎすぎたりしたときは、**素直に「待って、そこがよく分からないんだけど…」「どうしてその式になるの？」と質問し、アキトに詳しく説明し直してもらってください。**
-- 高校生の範囲外の概念（大学数学など）が出たときは、「それって高校で習う？」と素直に指摘してください。
-- 問題に対するアプローチ方法に関して、いろいろなアイデアを出してください。そのアイデアは間違っているものでも出すようにしてください。合っているかどうかはアキトに任せてください。
-- あえて間違えたことを言うようにしてください。（式変形を間違える、アイデアを間違えるなど）
+- 少しフランクで、問題解決に向けて熱心な高校生の口調（「なるほど！」「図に描いてみると分かりやすいかも」など）。
+- アキトが少しでも難しい定理を使ったり、計算を省略したりしたときは、素直に「待って、そこがよく分からないんだけど…」と質問してください。
+- あえて間違えたことやアイデアを出すようにしてください。
 
 【数式・定理の使用制限ルール（高校数学の範囲を厳守すること）】
 あなたは「日本の高校数学（数I・A・II・B・III・C）」の範囲内にある定理・公式・記号のみを使用してください。大学数学の知識は【絶対に使用禁止】です。
 
 特に以下の「大学数学の範囲」と「高校数学の範囲」の境界を厳守してください。NGになっているものは全て大学数学の範囲です。
-
 1. 【対数の表記】
    - NG: 自然対数を `ln(x)` と書くこと。
    - OK: 必ず `log x` または `log_e x` と記述してください。
@@ -176,16 +191,11 @@ INSTRUCTION_B = """あなたは高校三年生の「ハルタ」です。
 5. 【積分の制限】
    - NG: 重積分（二重積分など）、微分方程式。
    - OK: 積分の計算は、高校で習う置換積分・部分積分を用いて1変数のみで解いてください。
-
+   
 【ゼミ議論のルール】
-1. 各発言は【150文字〜350文字】程度で、簡潔かつ等身大なやり取りをしてください。
-2. **「置いていかれないルール」**: アキトの説明に対して、自分が完全に理解できるまでは次のステップに進まないでください。必要に応じて「直感的なイメージ」や「具体的な数字での具体例」をアキトに要求してください。
-3. 思考をビジュアルで整理したい場合、Pythonの「matplotlib」や「numpy」を用いた描写コードを積極的に書いてください。
-   - コードは必ず ```python と ``` のブロックで囲んでください。
-   - システムがコードを抽出し、あなたの代わりにグラフや図を即座に描画して議論の場に表示します。
-   - 注意：描写エラーを防ぐため、図のタイトルや軸ラベルには日本語を使わず、必ず英語（または数式表記）で作成してください。
-   - 数値計算による確認では使ってはいけません。あくまで描写コードはユーザー側に分かりやすく伝えるためのツールです。
-4. 解法と答えに十分納得がいき、答案が完成したと確信できたら、アキトの答案作成をサポートし、完成後に『【議論終了】』という1行を追加してください。
+1. 各発言は【150文字〜350文字】程度。
+2. 思考をビジュアルで整理したい場合、Pythonの「matplotlib」や「numpy」を用いた描写コード（```python ... ```）を積極的に書いてください（日本語ラベル禁止）。
+3. 解法と答えに十分納得がいき、答案が完成したと確信できたら、アキトの答案作成をサポートし、完成後に『【議論終了】』という1行を追加してください。
 
 {MATH_FORMAT_INSTRUCTION}
 """
@@ -229,13 +239,13 @@ def execute_generated_code(text):
             st.warning(f"⚠️ 描画コードの実行中にエラーが発生しました: {e}")
 
 # ----------------------------------------------------
-# 5. リトライ処理付き API 呼び出し関数（Colab版仕様）
+# 5. API 呼び出し関数
 # ----------------------------------------------------
 def get_ai_response(messages, turn, has_image):
     keep_image = (not has_image) or (turn <= 2)
     api_messages = clean_messages_for_api(messages, keep_image=keep_image)
 
-    retries = 5
+    retries = 3
     while retries > 0:
         try:
             response = client.chat.completions.create(
@@ -246,37 +256,19 @@ def get_ai_response(messages, turn, has_image):
             res_text = response.choices[0].message.content.strip()
 
             usage_info = {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0
+                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0
             }
             if hasattr(response, 'usage') and response.usage:
                 usage_info["prompt_tokens"] = getattr(response.usage, "prompt_tokens", 0)
                 usage_info["completion_tokens"] = getattr(response.usage, "completion_tokens", 0)
                 usage_info["total_tokens"] = getattr(response.usage, "total_tokens", 0)
 
-            if res_text and "[APIエラー" not in res_text:
+            if res_text:
                 return res_text, usage_info
 
-            raise Exception("不適切な空の応答が返されました")
-
         except Exception as e:
-            err_str = str(e)
-            # 429 レート制限や一時的なエラーの処理
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "rate-limited" in err_str or "Rate limit" in err_str:
-                wait_seconds = 15.0
-                match = re.search(r"Please retry in ([\d\.]+)s", err_str)
-                if match:
-                    wait_seconds = float(match.group(1)) + 1.0
-
-                st.warning(f"⚠️ API制限(429)検出。{wait_seconds:.1f} 秒待機して自動再試行します... (リトライ残り: {retries}回)")
-                time.sleep(wait_seconds)
-                retries -= 1
-                continue
-            else:
-                st.warning(f"一時的エラー: {e}。5秒後に再試行します... (リトライ残り: {retries}回)")
-                time.sleep(5)
-                retries -= 1
+            time.sleep(3)
+            retries -= 1
 
     return None, None
 
@@ -292,17 +284,19 @@ if not st.session_state.system_started:
         uploaded_file = st.file_uploader("問題を写したPNG画像（画像入力時のみ有効）", type=["png"])
         problem_input_text = st.text_area("考えて欲しい数学の問題を入力してください（テキスト入力時のみ有効）:", height=150)
         
+        # 図形問題かどうかの選択
+        is_geom = st.checkbox("📐 この問題は図形問題ですか？（エージェントに図形描画を指示します）", value=False)
+        
         start_btn = st.form_submit_button("ゼミ議論を開始する")
 
     if start_btn:
-        # 入力チェック
         if choice == "テキスト直接入力" and not problem_input_text.strip():
             st.error("❌ 問題文テキストを入力してください。")
         elif choice == "PNG画像をアップロード" and uploaded_file is None:
             st.error("❌ 問題画像をアップロードしてください。")
         else:
-            # セッション状態への書き込み
             st.session_state.has_image = (choice == "PNG画像をアップロード")
+            st.session_state.is_geometry = is_geom
             
             if st.session_state.has_image:
                 bytes_data = uploaded_file.read()
@@ -316,31 +310,28 @@ if not st.session_state.system_started:
                 st.session_state.image_content = None
                 st.session_state.problem_text = problem_input_text
 
-            # プロンプトの差し替えと組み立て
             problem_desc = f"提示された画像の問題" if st.session_state.has_image else f"提示された問題: {st.session_state.problem_text}"
             
             inst_A_formatted = INSTRUCTION_A.replace("{problem_description}", problem_desc).replace("{MATH_FORMAT_INSTRUCTION}", MATH_FORMAT_INSTRUCTION)
             inst_B_formatted = INSTRUCTION_B.replace("{problem_description}", problem_desc).replace("{MATH_FORMAT_INSTRUCTION}", MATH_FORMAT_INSTRUCTION)
 
-            # 初回発言に問題文を明示的に付与（空白対策）
-            start_prompt_text_A = f"こちらの数学の問題を一緒に解き明かしてください。アキト、まずは君から問題を表示し、最初の気づきを話して議論をスタートして。\n\n【解くべき問題】\n{problem_desc}"
+            # 図形問題の場合の追加指示
+            geom_instruction = ""
+            if st.session_state.is_geometry:
+                geom_instruction = "\n【重要】この問題は図形問題です。議論の最初に、問題の設定を図形として視覚化するため、まずはmatplotlibを使用したPythonコードを書いて図形を描画してください。"
+
+            start_prompt_text_A = f"こちらの数学の問題を一緒に解き明かしてください。アキト、まずは君から問題の整理をし、議論をスタートして。{geom_instruction}\n\n【解くべき問題】\n{problem_desc}"
             start_prompt_text_B = f"こちらの数学の問題を一緒に解き明かしてください。\n\n【解くべき問題】\n{problem_desc}"
 
             # 履歴の初期化
             if st.session_state.has_image:
                 st.session_state.messages_A = [
                     {"role": "system", "content": inst_A_formatted},
-                    {"role": "user", "content": [
-                        {"type": "text", "text": start_prompt_text_A},
-                        st.session_state.image_content
-                    ]}
+                    {"role": "user", "content": [{"type": "text", "text": start_prompt_text_A}, st.session_state.image_content]}
                 ]
                 st.session_state.messages_B = [
                     {"role": "system", "content": inst_B_formatted},
-                    {"role": "user", "content": [
-                        {"type": "text", "text": start_prompt_text_B},
-                        st.session_state.image_content
-                    ]}
+                    {"role": "user", "content": [{"type": "text", "text": start_prompt_text_B}, st.session_state.image_content]}
                 ]
             else:
                 st.session_state.messages_A = [
@@ -352,16 +343,13 @@ if not st.session_state.system_started:
                     {"role": "user", "content": start_prompt_text_B}
                 ]
 
-            # スプレッドシートに区切り行追加
-            if worksheet:
-                try:
-                    timestamp_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    divider = [timestamp_now, "SYSTEM", "-", "-", "========== [新規ゼミ議論 開始] ==========", "-", "-", "-"]
-                    worksheet.append_row(divider)
-                except Exception as e:
-                    st.warning(f"スプレッドシートへの記録に失敗しました: {e}")
+            # スプレッドシートに記録（問題開始ログ＆入力問題内容）
+            log_to_sheet("SYSTEM", "========== [新規ゼミ議論 開始] ==========")
+            log_to_sheet("USER_PROBLEM", f"[図形問題フラグ: {is_geom}] {st.session_state.problem_text}")
 
             st.session_state.system_started = True
+            st.session_state.is_finished = False
+            st.session_state.next_speaker = "A"
             st.rerun()
 
 else:
@@ -371,15 +359,16 @@ else:
     with col_side:
         st.subheader("⚙️ 設定情報")
         st.write(f"**現在のターン数:** {st.session_state.current_turn} / 20")
+        st.write(f"**次の発言予定:** {'アキト (先輩)' if st.session_state.next_speaker == 'A' else 'ハルタ (後輩)'}")
+        if st.session_state.is_geometry:
+            st.info("📐 図形問題モード: ON")
         if st.session_state.has_image:
             st.info("🖼️ 画像問題を読み込んでいます")
         else:
             st.text_area("解いている問題:", value=st.session_state.problem_text, disabled=True, height=150)
             
-        if st.button("セッションをリセット"):
-            for key in ["messages_A", "messages_B", "current_turn", "discussion_log", "system_started", "problem_text", "has_image", "image_content"]:
-                if key in st.session_state:
-                    del st.session_state[key]
+        if st.button("セッションを強制リセット"):
+            reset_session()
             st.rerun()
 
     with col_main:
@@ -387,85 +376,101 @@ else:
         
         # チャットログ表示
         for log in st.session_state.discussion_log:
-            role = log["role"]
-            speaker_name = log["speaker"]
-            content = log["content"]
-            
-            with st.chat_message(role):
-                st.markdown(f"**{speaker_name}**")
-                st.markdown(content)
+            with st.chat_message(log["role"]):
+                st.markdown(f"**{log['speaker']}**")
+                st.markdown(log["content"])
                 if "code_text" in log:
                     execute_generated_code(log["code_text"])
-                if "usage" in log and log["usage"]:
+                if log.get("usage"):
                     st.caption(f"📊 Prompt: {log['usage']['prompt_tokens']} | Completion: {log['usage']['completion_tokens']} | Total: {log['usage']['total_tokens']}")
         
         st.divider()
-        
-        # 進行および介入フォーム
-        with st.form("control_form", clear_on_submit=True):
-            user_intervention = st.text_input("💬 介入：指示や質問（空欄ならそのまま進行）")
-            submitted = st.form_submit_button("➡️ 次のターンへ進む")
-            
-        if submitted:
-            # 1. ユーザー介入の追加
-            if user_intervention.strip():
-                intervention_text = f"【ユーザーからの質問・意見】:\n{user_intervention}\n\nこの意見も踏まえて、議論を続けてください。"
-                st.session_state.messages_A.append({"role": "user", "content": intervention_text})
-                st.session_state.messages_B.append({"role": "user", "content": intervention_text})
-                st.session_state.discussion_log.append({
-                    "role": "user",
-                    "speaker": "ユーザー（あなた）",
-                    "content": user_intervention,
-                    "usage": None
-                })
 
-            # 2. キャラクターの発話生成
-            if st.session_state.current_turn % 2 != 0:
-                speaker = "アキト (数学科4年)"
-                role_icon = "assistant"
-                with st.spinner("🧑‍💻 アキトが思索中..."):
-                    response_text, usage = get_ai_response(st.session_state.messages_A, st.session_state.current_turn, st.session_state.has_image)
-                    if response_text:
-                        response_text = format_math_formulas(response_text)
-                        st.session_state.messages_A.append({"role": "assistant", "content": response_text})
-                        st.session_state.messages_B.append({"role": "user", "content": response_text})
-            else:
-                speaker = "ハルタ (高校3年)"
-                role_icon = "assistant"
-                with st.spinner("👨‍💻 ハルタが思索中..."):
-                    response_text, usage = get_ai_response(st.session_state.messages_B, st.session_state.current_turn, st.session_state.has_image)
-                    if response_text:
-                        response_text = format_math_formulas(response_text)
-                        st.session_state.messages_B.append({"role": "assistant", "content": response_text})
-                        st.session_state.messages_A.append({"role": "user", "content": response_text})
-            
-            # 発話が取得できた場合の保存処理
-            if response_text:
-                st.session_state.discussion_log.append({
-                    "role": role_icon,
-                    "speaker": speaker,
-                    "content": response_text,
-                    "code_text": response_text,
-                    "usage": usage
-                })
-                
-                if worksheet:
-                    try:
-                        jst = timezone(timedelta(hours=9), 'JST')
-                        timestamp = datetime.datetime.now(jst).strftime("%Y-%m-%d %H:%M:%S")
-                        row_data = [
-                            timestamp, MODEL, st.session_state.current_turn, 
-                            speaker, response_text, 
-                            usage["prompt_tokens"], usage["completion_tokens"], usage["total_tokens"]
-                        ]
-                        worksheet.append_row(row_data)
-                    except Exception as sheet_err:
-                        st.sidebar.error(f"⚠️ スプレッドシート保存エラー: {sheet_err}")
-                
-                st.session_state.current_turn += 1
-                
-                if "【議論終了】" in response_text:
-                    st.balloons()
-                    st.success("🤝 議論が円満に解決したため、ゼミを終了します。")
-                
+        # 議論終了時の処理
+        if st.session_state.is_finished:
+            st.balloons()
+            st.success("🤝 議論が完了しました！お疲れ様でした。")
+            if st.button("🔄 次の新しい問題を解く"):
+                reset_session()
                 st.rerun()
+        else:
+            # 進行および介入フォーム
+            with st.form("control_form", clear_on_submit=True):
+                target_agent = st.radio(
+                    "介入時の質問・意見の宛先:",
+                    ("おまかせ (交互に進行)", "アキトに質問/発言させる", "ハルタに質問/発言させる"),
+                    horizontal=True
+                )
+                user_intervention = st.text_input("💬 介入：指示や質問（空欄ならそのまま進行）")
+                submitted = st.form_submit_button("➡️ 次のターンへ進む")
+                
+            if submitted:
+                # ユーザー介入がある場合の処理
+                if user_intervention.strip():
+                    # 宛先による話者の明示
+                    recipient_prefix = ""
+                    if target_agent == "アキトに質問/発言させる":
+                        recipient_prefix = "【アキト先輩への質問・意見】: "
+                        st.session_state.next_speaker = "A"
+                    elif target_agent == "ハルタに質問/発言させる":
+                        recipient_prefix = "【ハルタへの質問・意見】: "
+                        st.session_state.next_speaker = "B"
+                    else:
+                        recipient_prefix = "【ユーザーからの質問・意見】: "
+
+                    intervention_text = f"{recipient_prefix}\n{user_intervention}\n\nこの意見も踏まえて、議論を続けてください。"
+                    
+                    st.session_state.messages_A.append({"role": "user", "content": intervention_text})
+                    st.session_state.messages_B.append({"role": "user", "content": intervention_text})
+                    st.session_state.discussion_log.append({
+                        "role": "user",
+                        "speaker": f"ユーザー（あなた） -> {target_agent.replace('に質問/発言させる', '')}",
+                        "content": user_intervention,
+                        "usage": None
+                    })
+                    
+                    # ユーザー介入をスプレッドシートに記録
+                    log_to_sheet(f"USER_INTERVENTION (To: {target_agent})", user_intervention, turn=st.session_state.current_turn)
+
+                # キャラクターの発話生成
+                if st.session_state.next_speaker == "A":
+                    speaker = "アキト (数学科4年)"
+                    role_icon = "assistant"
+                    with st.spinner("🧑‍💻 アキトが思索中..."):
+                        response_text, usage = get_ai_response(st.session_state.messages_A, st.session_state.current_turn, st.session_state.has_image)
+                        if response_text:
+                            response_text = format_math_formulas(response_text)
+                            st.session_state.messages_A.append({"role": "assistant", "content": response_text})
+                            st.session_state.messages_B.append({"role": "user", "content": response_text})
+                            # 次はBへ交代
+                            st.session_state.next_speaker = "B"
+                else:
+                    speaker = "ハルタ (高校3年)"
+                    role_icon = "assistant"
+                    with st.spinner("👨‍💻 ハルタが思索中..."):
+                        response_text, usage = get_ai_response(st.session_state.messages_B, st.session_state.current_turn, st.session_state.has_image)
+                        if response_text:
+                            response_text = format_math_formulas(response_text)
+                            st.session_state.messages_B.append({"role": "assistant", "content": response_text})
+                            st.session_state.messages_A.append({"role": "user", "content": response_text})
+                            # 次はAへ交代
+                            st.session_state.next_speaker = "A"
+                
+                # 発話のログ・スプレッドシート保存
+                if response_text:
+                    st.session_state.discussion_log.append({
+                        "role": role_icon,
+                        "speaker": speaker,
+                        "content": response_text,
+                        "code_text": response_text,
+                        "usage": usage
+                    })
+                    
+                    log_to_sheet(speaker, response_text, usage=usage, turn=st.session_state.current_turn)
+                    st.session_state.current_turn += 1
+                    
+                    # 議論終了判定
+                    if "【議論終了】" in response_text:
+                        st.session_state.is_finished = True
+                    
+                    st.rerun()
