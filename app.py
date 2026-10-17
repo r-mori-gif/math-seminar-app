@@ -8,6 +8,7 @@ import time
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 from openai import OpenAI
 import gspread
 
@@ -267,37 +268,36 @@ def execute_generated_code(text):
         # 1. 描画を消失させる plt.show() を除去
         cleaned_code = re.sub(r'plt\.show\s*\(\s*\)', '', code)
         
-        # 2. 前の描画状態を完全にクリア
+        # 2. 前の描画状態をクリア
         plt.close('all')
         plt.clf()
 
         st.caption("🎨 **エージェントが構築した図形:**")
         try:
-            # 必要なライブラリを実行環境に明示的に注入
-            exec_globals = {
-                "plt": plt,
+            # 3. 単一の実行環境スコープを用意（インポート省略対策 & スコープ問題対策）
+            exec_env = {
+                "__builtins__": __builtins__,
                 "np": np,
-                "matplotlib": matplotlib
+                "numpy": np,
+                "plt": plt,
+                "matplotlib": matplotlib,
+                "patches": patches,
+                "math": math
             }
-            local_vars = {}
             
-            # コードの実行
-            exec(cleaned_code, exec_globals, local_vars)
+            # globals と locals を同じ辞書にすることで、内包表記やループ内のスコープエラーを防ぐ
+            exec(cleaned_code, exec_env, exec_env)
             
-            # 3. AIが作成した最新のアクティブなFigure（キャンバス）を取得
+            # 4. アクティブなFigureを取得して表示
             fig = plt.gcf()
-            
-            # 図の中にプロットが存在するか確認して表示
             if fig and len(fig.get_axes()) > 0:
                 st.pyplot(fig)
             else:
-                # 明示的な Axes がない場合でもキャンバスを描画
                 st.pyplot(fig)
 
         except Exception as e:
             st.warning(f"⚠️ 描画コードの実行中にエラーが発生しました: {e}")
         finally:
-            # メモリリーク防止のため必ずクローズ
             plt.close('all')
             
 # ----------------------------------------------------
