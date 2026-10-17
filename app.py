@@ -5,6 +5,8 @@ import base64
 import datetime
 from datetime import timezone, timedelta
 import time
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from openai import OpenAI
 import gspread
@@ -262,16 +264,42 @@ def format_math_formulas(text):
 def execute_generated_code(text):
     code_blocks = re.findall(r'```python\s*(.*?)\s*```', text, re.DOTALL)
     for code in code_blocks:
+        # 1. 描画を消失させる plt.show() を除去
+        cleaned_code = re.sub(r'plt\.show\s*\(\s*\)', '', code)
+        
+        # 2. 前の描画状態を完全にクリア
+        plt.close('all')
+        plt.clf()
+
         st.caption("🎨 **エージェントが構築した図形:**")
         try:
+            # 必要なライブラリを実行環境に明示的に注入
+            exec_globals = {
+                "plt": plt,
+                "np": np,
+                "matplotlib": matplotlib
+            }
             local_vars = {}
-            fig = plt.figure()
-            exec(code, globals(), local_vars)
-            st.pyplot(fig)
-            plt.close(fig)
+            
+            # コードの実行
+            exec(cleaned_code, exec_globals, local_vars)
+            
+            # 3. AIが作成した最新のアクティブなFigure（キャンバス）を取得
+            fig = plt.gcf()
+            
+            # 図の中にプロットが存在するか確認して表示
+            if fig and len(fig.get_axes()) > 0:
+                st.pyplot(fig)
+            else:
+                # 明示的な Axes がない場合でもキャンバスを描画
+                st.pyplot(fig)
+
         except Exception as e:
             st.warning(f"⚠️ 描画コードの実行中にエラーが発生しました: {e}")
-
+        finally:
+            # メモリリーク防止のため必ずクローズ
+            plt.close('all')
+            
 # ----------------------------------------------------
 # 5. API 呼び出し関数
 # ----------------------------------------------------
