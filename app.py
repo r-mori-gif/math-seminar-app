@@ -393,7 +393,7 @@ else:
     with col_side:
         st.subheader("⚙️ 設定情報")
         st.write(f"**現在のターン数:** {st.session_state.current_turn}")
-        st.write(f"**次の発言予定:** {'アキト (先輩)' if st.session_state.next_speaker == 'A' else 'ハルタ (後輩)'}")
+        st.write(f"**次の発言予定:** {'アキト (数学科4年)' if st.session_state.next_speaker == 'A' else 'ハルタ (高校3年)'}")
         if st.session_state.is_geometry:
             st.info("📐 図形問題モード: ON")
         if st.session_state.has_image:
