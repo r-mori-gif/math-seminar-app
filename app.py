@@ -5,6 +5,8 @@ import base64
 import datetime
 from datetime import timezone, timedelta
 import time
+import math            # ← 追加
+import numpy as np     # ← 追加
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
