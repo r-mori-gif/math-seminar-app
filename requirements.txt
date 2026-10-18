@@ -2,3 +2,5 @@ streamlit
 openai
 gspread
 matplotlib
+math
+numpy
