@@ -322,13 +322,13 @@ def execute_generated_code(text):
 # 5. API 呼び出し関数
 # ----------------------------------------------------
 def get_ai_response(messages, turn, has_image):
-    # 画像保持判定（画像がある場合は最初の2ターンのみ画像を維持しトークン節約）
-    keep_image = (not has_image) or (turn <= 2)
+    # 画像問題の場合は途中で画像を消さず、常に送り続ける
+    keep_image = True
     
-    # ── トークン節約と問題文常時保持のロジック ──
-    # messages[0]: システムプロンプト（問題文の概要含む）
-    # messages[1]: 最初のユーザー投稿（具体的な問題文・出題プロンプト）
-    # これ以降の対話ログは直近6発話（約3ターン分）のみを抽出
+    # ── トークン節約と問題文（画像含む）常時保持のロジック ──
+    # messages[0]: システムプロンプト
+    # messages[1]: 最初の問題文（画像データ含む）
+    # 直近6発話（約3ターン分）の議論ログ + 先頭の問題定義を結合
     if len(messages) > 8:
         trimmed_messages = messages[:2] + messages[-6:]
     else:
@@ -362,7 +362,7 @@ def get_ai_response(messages, turn, has_image):
             retries -= 1
 
     return None, None
-
+    
 # ----------------------------------------------------
 # 6. UIの構築
 # ----------------------------------------------------
