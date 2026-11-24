@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from openai import OpenAI
 import gspread
+import drawing_assist as da  # 作図支援モジュール（同じフォルダに置く）
 
 # ----------------------------------------------------
 # 1. ページ初期設定
@@ -45,6 +46,9 @@ if "image_content" not in st.session_state:
     st.session_state.image_content = None
 if "image_bytes" not in st.session_state:
     st.session_state.image_bytes = None
+
+# 作図支援モジュールの状態を初期化
+da.init_state()
 
 # APIの設定
 client = OpenAI(
@@ -95,6 +99,7 @@ def reset_session():
     for key in keys:
         if key in st.session_state:
             del st.session_state[key]
+    da.reset_state()  # 作図支援モジュールの状態もリセット
 
 # ----------------------------------------------------
 # 3. プロンプト定義
@@ -384,6 +389,12 @@ if not st.session_state.system_started:
         problem_input_text = st.text_area("考えて欲しい数学の問題を入力してください:", height=150)
         
     is_geom = st.checkbox("📐 この問題は図形問題ですか？（エージェントに図形描画を指示します）", value=False)
+    learner_draws = st.checkbox(
+        "✏️ 学習者が自分で図を描く（作図支援モード：エージェントは最初に図を描かず、作図の詰まりに応じてヒントを出します）",
+        value=False
+    )
+    if learner_draws and not da.CANVAS_AVAILABLE:
+        st.warning("⚠️ streamlit-drawable-canvas がインストールされていません。作図パネルを使うにはインストールしてください。")
     
     if st.button("ゼミ議論を開始する", type="primary"):
         if choice == "テキスト直接入力" and not problem_input_text.strip():
@@ -393,6 +404,7 @@ if not st.session_state.system_started:
         else:
             st.session_state.has_image = (choice == "PNG画像をアップロード")
             st.session_state.is_geometry = is_geom
+            st.session_state.learner_draws = learner_draws
             
             if st.session_state.has_image:
                 bytes_data = uploaded_file.getvalue()
@@ -416,9 +428,14 @@ if not st.session_state.system_started:
             geom_instruction = ""
             if st.session_state.is_geometry:
                 geom_instruction = "\n【重要】この問題は図形問題です。議論の最初に、問題の設定を図形として視覚化するため、まずはmatplotlibを使用したPythonコードを書いて図形を描画してください。"
+            if st.session_state.learner_draws:
+                # 作図支援モード：エージェントは最初に図を描かず、学習者が自分で描く
+                geom_instruction = da.LEARNER_DRAWS_INSTRUCTION_A
 
             start_prompt_text_A = f"こちらの数学の問題を一緒に解き明かしてください。アキト、まずは君から問題の整理をし、議論をスタートして。{geom_instruction}\n\n【解くべき問題】\n{problem_desc}"
             start_prompt_text_B = f"こちらの数学の問題を一緒に解き明かしてください。\n\n【解くべき問題】\n{problem_desc}"
+            if st.session_state.learner_draws:
+                start_prompt_text_B += da.LEARNER_DRAWS_INSTRUCTION_B
 
             if st.session_state.has_image:
                 st.session_state.messages_A = [
@@ -441,6 +458,7 @@ if not st.session_state.system_started:
 
             log_to_sheet("SYSTEM", "========== [新規ゼミ議論 開始] ==========")
             log_to_sheet("USER_PROBLEM", f"[図形問題フラグ: {is_geom}] {st.session_state.problem_text}")
+            log_to_sheet("SYSTEM", f"[作図支援モード: {learner_draws}]")
 
             st.session_state.system_started = True
             st.session_state.is_finished = False
@@ -463,6 +481,8 @@ else:
         st.write(f"**次の発言:** {'アキト (数学科4年)' if st.session_state.next_speaker == 'A' else 'ハルタ (高校3年)'}")
         if st.session_state.is_geometry:
             st.success("📐 図形描画モード: ON")
+        if st.session_state.get("learner_draws"):
+            st.success("✏️ 作図支援モード: ON")
             
         if st.button("セッションを初期化"):
             reset_session()
@@ -497,6 +517,17 @@ else:
             reset_session()
             st.rerun()
     else:
+        # 作図支援モード：作図パネルの表示と、詰まりに応じたヒントの処理
+        if st.session_state.get("learner_draws"):
+            da.render_drawing_panel()
+            da.handle_advice_request(
+                client=client,
+                model=MODEL,
+                get_ai_response=get_ai_response,
+                format_math_formulas=format_math_formulas,
+                log_to_sheet=log_to_sheet,
+            )
+
         # 進行および介入フォーム
         with st.form("control_form", clear_on_submit=True):
             target_agent = st.radio(
