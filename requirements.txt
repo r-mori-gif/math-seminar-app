@@ -1,4 +1,6 @@
-streamlit
+streamlit>=1.37
 openai
 gspread
 matplotlib
+Pillow
+streamlit-drawable-canvas-fix
